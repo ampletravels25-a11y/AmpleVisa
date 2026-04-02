@@ -1,0 +1,470 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ───────────────────────────────────────────────
+
+enum UserRole {
+  SUPERADMIN
+  ADMIN_TEAM
+  EMPLOYEE
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING
+}
+
+enum CompanyStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
+}
+
+enum ApplicationStatus {
+  INITIATED
+  DOCUMENTS_PENDING
+  UNDER_REVIEW
+  REVISIONS_REQUESTED
+  APPROVED_PAYMENT_PENDING
+  PAYMENT_CONFIRMED
+  PROCESSING
+  VISA_ISSUED
+  REJECTED
+}
+
+enum DocumentStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  RE_UPLOAD_REQUESTED
+}
+
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  REFUNDED
+}
+
+enum NotificationType {
+  APPLICATION_UPDATE
+  DOCUMENT_REVIEW
+  PAYMENT
+  SYSTEM
+  SHARE
+}
+
+enum NotificationChannel {
+  EMAIL
+  IN_APP
+  BOTH
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  EXPORT
+  STATUS_CHANGE
+}
+
+enum ApplicationPriority {
+  NORMAL
+  URGENT
+}
+
+// ─── Models ──────────────────────────────────────────────
+
+model Company {
+  id             String        @id @default(cuid())
+  name           String
+  domain         String        @unique
+  logo           String?
+  address        String?
+  industry       String?
+  brandingConfig Json?
+  status         CompanyStatus @default(PENDING_VERIFICATION)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  employees    User[]
+  applications VisaApplication[]
+
+  @@map("companies")
+}
+
+model User {
+  id               String     @id @default(cuid())
+  email            String     @unique
+  firstName        String?
+  lastName         String?
+  phone            String?
+  avatar           String?
+  role             UserRole   @default(EMPLOYEE)
+  companyId        String?
+  company          Company?   @relation(fields: [companyId], references: [id])
+  passwordHash     String?
+  twoFactorSecret  String?
+  twoFactorEnabled Boolean    @default(false)
+  adminPermissions Json?
+  status           UserStatus @default(PENDING)
+  lastLoginAt      DateTime?
+  deletedAt        DateTime?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  profile               UserProfile?
+  applications          VisaApplication[]     @relation("Applicant")
+  initiatedApplications VisaApplication[]     @relation("Initiator")
+  assignedApplications  VisaApplication[]     @relation("AssignedAgent")
+  reviewedDocuments     ApplicationDocument[] @relation("DocumentReviewer")
+  comments              ApplicationComment[]
+  statusChanges         StatusChange[]
+  payments              Payment[]
+  notifications         Notification[]
+  auditLogs             AuditLog[]
+  sharedVisaInfo        VisaInfoShare[]
+  issuedVisas           IssuedVisa[]          @relation("VisaUploader")
+  otpCodes              OtpCode[]
+
+  @@map("users")
+}
+
+model UserProfile {
+  id             String    @id @default(cuid())
+  userId         String    @unique
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  passportNumber String?
+  nationality    String?
+  dateOfBirth    DateTime?
+  gender         String?
+  address        String?
+  city           String?
+  state          String?
+  country        String?
+  zipCode        String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@map("user_profiles")
+}
+
+model OtpCode {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  code      String
+  expiresAt DateTime
+  attempts  Int      @default(0)
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@map("otp_codes")
+}
+
+model Country {
+  id          String   @id @default(cuid())
+  name        String
+  code        String   @unique
+  slug        String   @unique
+  flagUrl     String?
+  description String?  @db.Text
+  bannerImage String?
+  gallery     Json?
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  visaTypes VisaType[]
+
+  @@map("countries")
+}
+
+model VisaType {
+  id             String   @id @default(cuid())
+  countryId      String
+  country        Country  @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  name           String
+  slug           String
+  description    String?  @db.Text
+  overview       String?  @db.Text
+  processingTime String?
+  validityPeriod String?
+  maxStay        String?
+  fees           Json?
+  isActive       Boolean  @default(true)
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  template     VisaTemplate?
+  requirements VisaRequirement[]
+  documents    RequiredDocument[]
+  steps        ProcessStep[]
+  applications VisaApplication[]
+  shares       VisaInfoShare[]
+
+  @@unique([countryId, slug])
+  @@map("visa_types")
+}
+
+model VisaTemplate {
+  id         String   @id @default(cuid())
+  visaTypeId String   @unique
+  visaType   VisaType @relation(fields: [visaTypeId], references: [id], onDelete: Cascade)
+  fields     Json
+  sections   Json
+  version    Int      @default(1)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("visa_templates")
+}
+
+model VisaRequirement {
+  id          String   @id @default(cuid())
+  visaTypeId  String
+  visaType    VisaType @relation(fields: [visaTypeId], references: [id], onDelete: Cascade)
+  title       String
+  description String?  @db.Text
+  isMandatory Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("visa_requirements")
+}
+
+model RequiredDocument {
+  id                String   @id @default(cuid())
+  visaTypeId        String
+  visaType          VisaType @relation(fields: [visaTypeId], references: [id], onDelete: Cascade)
+  name              String
+  description       String?  @db.Text
+  helpText          String?
+  acceptedFormats   Json
+  maxFileSize       Int      @default(10)
+  isMandatory       Boolean  @default(true)
+  sortOrder         Int      @default(0)
+  sampleDocumentUrl String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  applicationDocuments ApplicationDocument[]
+
+  @@map("required_documents")
+}
+
+model ProcessStep {
+  id                String   @id @default(cuid())
+  visaTypeId        String
+  visaType          VisaType @relation(fields: [visaTypeId], references: [id], onDelete: Cascade)
+  stepNumber        Int
+  title             String
+  description       String?  @db.Text
+  estimatedDuration String?
+  tips              String?  @db.Text
+  sortOrder         Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("process_steps")
+}
+
+model VisaApplication {
+  id                String            @id @default(cuid())
+  applicationNumber String            @unique
+  userId            String
+  user              User              @relation("Applicant", fields: [userId], references: [id])
+  initiatedById     String
+  initiatedBy       User              @relation("Initiator", fields: [initiatedById], references: [id])
+  visaTypeId        String
+  visaType          VisaType          @relation(fields: [visaTypeId], references: [id])
+  companyId         String
+  company           Company           @relation(fields: [companyId], references: [id])
+  status            ApplicationStatus @default(INITIATED)
+  formData          Json?
+  submittedAt       DateTime?
+  approvedAt        DateTime?
+  rejectedAt        DateTime?
+  issuedAt          DateTime?
+  rejectionReason   String?           @db.Text
+  assignedToId      String?
+  assignedTo        User?             @relation("AssignedAgent", fields: [assignedToId], references: [id])
+  priority          ApplicationPriority @default(NORMAL)
+  deletedAt         DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  documents     ApplicationDocument[]
+  comments      ApplicationComment[]
+  statusHistory StatusChange[]
+  payment       Payment?
+  issuedVisa    IssuedVisa?
+
+  @@index([status])
+  @@index([companyId])
+  @@index([userId])
+  @@map("visa_applications")
+}
+
+model ApplicationDocument {
+  id                 String          @id @default(cuid())
+  applicationId      String
+  application        VisaApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  requiredDocumentId String
+  requiredDocument   RequiredDocument @relation(fields: [requiredDocumentId], references: [id])
+  fileUrl            String
+  fileName           String
+  fileType           String
+  fileSize           Int
+  status             DocumentStatus  @default(PENDING_REVIEW)
+  reviewNote         String?         @db.Text
+  reviewedById       String?
+  reviewedBy         User?           @relation("DocumentReviewer", fields: [reviewedById], references: [id])
+  uploadedAt         DateTime        @default(now())
+  reviewedAt         DateTime?
+  version            Int             @default(1)
+
+  @@map("application_documents")
+}
+
+model ApplicationComment {
+  id            String          @id @default(cuid())
+  applicationId String
+  application   VisaApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  authorId      String
+  author        User            @relation(fields: [authorId], references: [id])
+  content       String          @db.Text
+  isInternal    Boolean         @default(false)
+  attachments   Json?
+  parentId      String?
+  parent        ApplicationComment?  @relation("CommentThread", fields: [parentId], references: [id])
+  replies       ApplicationComment[] @relation("CommentThread")
+  createdAt     DateTime        @default(now())
+
+  @@map("application_comments")
+}
+
+model StatusChange {
+  id            String            @id @default(cuid())
+  applicationId String
+  application   VisaApplication   @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  fromStatus    ApplicationStatus
+  toStatus      ApplicationStatus
+  changedById   String
+  changedBy     User              @relation(fields: [changedById], references: [id])
+  note          String?           @db.Text
+  createdAt     DateTime          @default(now())
+
+  @@map("status_changes")
+}
+
+model Payment {
+  id                String          @id @default(cuid())
+  applicationId     String          @unique
+  application       VisaApplication @relation(fields: [applicationId], references: [id])
+  userId            String
+  user              User            @relation(fields: [userId], references: [id])
+  razorpayOrderId   String?
+  razorpayPaymentId String?
+  razorpaySignature String?
+  amount            Float
+  currency          String          @default("INR")
+  feeBreakdown      Json?
+  status            PaymentStatus   @default(PENDING)
+  paidAt            DateTime?
+  refundedAt        DateTime?
+  createdAt         DateTime        @default(now())
+
+  @@map("payments")
+}
+
+model Notification {
+  id        String              @id @default(cuid())
+  userId    String
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  message   String              @db.Text
+  data      Json?
+  isRead    Boolean             @default(false)
+  channel   NotificationChannel @default(BOTH)
+  createdAt DateTime            @default(now())
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id        String      @id @default(cuid())
+  userId    String
+  user      User        @relation(fields: [userId], references: [id])
+  action    AuditAction
+  entity    String
+  entityId  String
+  changes   Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime    @default(now())
+
+  @@index([entity, entityId])
+  @@index([userId])
+  @@map("audit_logs")
+}
+
+model VisaInfoShare {
+  id             String   @id @default(cuid())
+  sharedById     String
+  sharedBy       User     @relation(fields: [sharedById], references: [id])
+  visaTypeId     String
+  visaType       VisaType @relation(fields: [visaTypeId], references: [id])
+  recipientEmail String
+  recipientName  String?
+  sharedAt       DateTime @default(now())
+  downloadCount  Int      @default(0)
+
+  @@map("visa_info_shares")
+}
+
+model IssuedVisa {
+  id            String          @id @default(cuid())
+  applicationId String          @unique
+  application   VisaApplication @relation(fields: [applicationId], references: [id])
+  fileUrl       String
+  visaNumber    String
+  issuedDate    DateTime
+  expiryDate    DateTime
+  notes         String?         @db.Text
+  uploadedById  String
+  uploadedBy    User            @relation("VisaUploader", fields: [uploadedById], references: [id])
+  createdAt     DateTime        @default(now())
+
+  @@map("issued_visas")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([token])
+  @@index([userId])
+  @@map("sessions")
+}
